@@ -1,0 +1,98 @@
+//@version=6
+indicator("Alpha 9.2 Index (Deep Shield)", overlay=true)
+
+// 1. 지표 계산
+ma20 = ta.sma(close, 20)
+ma120 = ta.sma(close, 120)
+ma20_slope = ma20 - ma20[1]
+
+// 2. 변수 선언 (고점 추적 및 상태 관리)
+var float peak_price = 0.0
+var bool trailing_triggered = false
+var bool in_position = false
+
+// 3. 진입 및 탈출 로직 시뮬레이션
+// 진입 조건: 가격이 120일선 위이고, 20일선 기울기가 양수일 때
+buy_condition = (close > ma120) and (ma20_slope > 0)
+// 탈출 조건: 가격이 120일선 아래로 2% 이상 이탈할 때
+exit_condition = (close < ma120 * 0.98)
+
+if buy_condition and not in_position
+    in_position := true
+    peak_price := high
+
+if in_position
+    peak_price := math.max(peak_price, high)
+    
+    // 선제 방어(Shield): 고점 대비 15% 하락 시
+    if not trailing_triggered and (close < peak_price * 0.85)
+        trailing_triggered := true
+    
+    // 전량 탈출
+    if exit_condition
+        in_position := false
+        trailing_triggered := false
+        peak_price := 0.0
+
+// 4. 신호 발생 (차트 표시용)
+buy_signal = buy_condition and not in_position[1]
+shield_signal = in_position and trailing_triggered and not trailing_triggered[1]
+exit_signal = not in_position and in_position[1]
+
+// 5. 차트 표시
+plot(ma20, color=color.new(color.blue, 0), title="MA20")
+plot(ma120, color=color.new(color.orange, 0), linewidth=2, title="MA120")
+
+plotshape(buy_signal, title="Buy Alert", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="ENTRY (95%)")
+plotshape(shield_signal, title="Shield Alert", style=shape.labeldown, location=location.abovebar, color=color.yellow, size=size.small, text="SHIELD (60% SELL)")
+plotshape(exit_signal, title="Total Exit", style=shape.xcross, location=location.abovebar, color=color.red, size=size.small, text="TOTAL EXIT")
+
+
+
+//@version=5
+strategy("ASL - Index Alpha 9.2 (Deep Shield)", overlay=true, initial_capital=100000, default_qty_type=strategy.cash, default_qty_value=95000)
+
+// 1. 지표 계산
+ma20 = ta.sma(close, 20)
+ma120 = ta.sma(close, 120)
+ma20_slope = ma20 - ma20[1]
+
+// 2. 고점 관리를 위한 변수
+var float peak_price = 0.0
+var bool trailing_triggered = false
+
+if (strategy.position_size > 0)
+    peak_price := math.max(peak_price, high)
+else
+    peak_price := 0.0
+    trailing_triggered := false
+
+// 3. 매수 로직 (Entry)
+// 120일선 위 + 20일선 상향 시 95% 투입
+buy_condition = close > ma120 and ma20_slope > 0 and strategy.position_size == 0
+if (buy_condition)
+    strategy.entry("Long", strategy.long, comment="Entry (95%)")
+
+// 4. 방어 및 재진입 로직 (Shield & Re-entry)
+if (strategy.position_size > 0)
+    // [방어] 고점 대비 -15% 하락 시 물량의 60% 매도
+    if (not trailing_triggered and close < peak_price * 0.85)
+        strategy.close("Long", qty_percent=60, comment="Shield (Sell 60%)")
+        trailing_triggered := true
+    
+    // [재진입] 방어 작동 후 20일선 위로 안착 시 다시 비중 복귀
+    if (trailing_triggered and close > ma20)
+        strategy.entry("Long", strategy.long, comment="Re-entry")
+        trailing_triggered := false
+        peak_price := close // 재진입 후 고점 초기화
+
+// 5. 최종 탈출 로직 (Exit)
+// 120일선 2% 하락 돌파 시 전량 매도
+exit_condition = close < ma120 * 0.98
+if (exit_condition)
+    strategy.close_all(comment="Total Exit (MA120)")
+
+// 차트 표시 (시각화)
+plot(ma20, color=color.blue, title="MA20")
+plot(ma120, color=color.red, linewidth=2, title="MA120")
+plot(peak_price > 0 ? peak_price * 0.85 : na, color=color.gray, style=plot.style_linebr, title="Shield Line (-15%)")
