@@ -124,9 +124,9 @@ if (buy_condition)
 
 // 4. 방어 및 재진입 로직 (Shield & Re-entry)
 if (strategy.position_size > 0)
-    // [방어] 고점 대비 -15% 하락 시 물량의 60% 매도
+    // [방어] 고점 대비 -15% 하락 시 물량의 10% 매도
     if (not trailing_triggered and close < peak_price * 0.85)
-        strategy.close("Long", qty_percent=60, comment="Shield (Sell 60%)")
+        strategy.close("Long", qty_percent=10, comment="Shield (Sell 10%)")
         trailing_triggered := true
     
     // [재진입] 방어 작동 후 20일선 위로 안착 시 다시 비중 복귀 (100% 재충전)
