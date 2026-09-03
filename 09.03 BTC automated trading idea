@@ -1,0 +1,59 @@
+//@version=5
+strategy("Vol-Targeted Trend + DD Breaker", overlay=true,
+     initial_capital=10000, pyramiding=0,
+     commission_type=strategy.commission.percent, commission_value=0.05)
+
+// === Inputs ===
+emaFastLen  = input.int(50, "Fast EMA")
+emaSlowLen  = input.int(200, "Slow EMA")
+atrLen      = input.int(14, "ATR Length")
+atrMult     = input.float(3.0, "Chandelier ATR Mult")
+volTargetPct= input.float(2.0, "1봉당 목표 변동성 %")
+maxPosPct   = input.float(100, "최대 포지션 % (자산 대비)")
+ddLimitPct  = input.float(15.0, "DD 서킷브레이커 발동 %")
+cooldownBars= input.int(20, "서킷브레이커 후 쿨다운 봉수")
+
+// === 추세 필터 ===
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+uptrend = close > emaSlow and emaFast > emaSlow
+
+// === ATR & 변동성 타겟 사이징 ===
+atr = ta.atr(atrLen)
+atrPct = atr / close * 100
+rawSizePct = volTargetPct / atrPct * 100
+sizePct = math.min(rawSizePct, maxPosPct)
+
+// === 샹들리에 익싯 ===
+highestHigh = ta.highest(high, atrLen)
+chandelierStop = highestHigh - atr * atrMult
+
+// === 자산 고점 대비 DD 추적 ===
+var float eqPeak = strategy.initial_capital
+eqPeak := math.max(eqPeak, strategy.equity)
+ddPct = (eqPeak - strategy.equity) / eqPeak * 100
+
+var int cooldownCounter = 0
+if ddPct >= ddLimitPct and cooldownCounter == 0
+    cooldownCounter := cooldownBars
+    strategy.close_all(comment="DD breaker")
+
+if cooldownCounter > 0
+    cooldownCounter := cooldownCounter - 1
+
+canTrade = cooldownCounter == 0
+
+// === 진입/청산 ===
+if uptrend and canTrade and strategy.position_size == 0
+    qty = sizePct/100 * strategy.equity / close
+    strategy.entry("Long", strategy.long, qty=qty)
+
+if strategy.position_size > 0
+    strategy.exit("Exit", "Long", stop=chandelierStop)
+
+if not uptrend and strategy.position_size > 0
+    strategy.close("Long", comment="Trend flip")
+
+plot(emaFast, color=color.orange)
+plot(emaSlow, color=color.blue)
+plot(strategy.position_size > 0 ? chandelierStop : na, color=color.red, style=plot.style_linebr)
