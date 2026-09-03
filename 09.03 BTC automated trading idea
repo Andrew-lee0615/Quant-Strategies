@@ -1,59 +1,173 @@
+수정사항
 //@version=5
-strategy("Vol-Targeted Trend + DD Breaker", overlay=true,
-     initial_capital=10000, pyramiding=0,
-     commission_type=strategy.commission.percent, commission_value=0.05)
+strategy("ASL - Index Alpha 9.3 (Tiered Shield)", overlay=true,
+     initial_capital=100000, default_qty_type=strategy.percent_of_equity,
+     default_qty_value=100, pyramiding=0)
 
-// === Inputs ===
-emaFastLen  = input.int(50, "Fast EMA")
-emaSlowLen  = input.int(200, "Slow EMA")
-atrLen      = input.int(14, "ATR Length")
-atrMult     = input.float(3.0, "Chandelier ATR Mult")
-volTargetPct= input.float(2.0, "1봉당 목표 변동성 %")
-maxPosPct   = input.float(100, "최대 포지션 % (자산 대비)")
-ddLimitPct  = input.float(15.0, "DD 서킷브레이커 발동 %")
-cooldownBars= input.int(20, "서킷브레이커 후 쿨다운 봉수")
+ma20 = ta.sma(close, 20)
+ma120 = ta.sma(close, 120)
+ma20_slope = ma20 - ma20[1]
 
-// === 추세 필터 ===
-emaFast = ta.ema(close, emaFastLen)
-emaSlow = ta.ema(close, emaSlowLen)
-uptrend = close > emaSlow and emaFast > emaSlow
-
-// === ATR & 변동성 타겟 사이징 ===
-atr = ta.atr(atrLen)
-atrPct = atr / close * 100
-rawSizePct = volTargetPct / atrPct * 100
-sizePct = math.min(rawSizePct, maxPosPct)
-
-// === 샹들리에 익싯 ===
-highestHigh = ta.highest(high, atrLen)
-chandelierStop = highestHigh - atr * atrMult
-
-// === 자산 고점 대비 DD 추적 ===
-var float eqPeak = strategy.initial_capital
-eqPeak := math.max(eqPeak, strategy.equity)
-ddPct = (eqPeak - strategy.equity) / eqPeak * 100
-
-var int cooldownCounter = 0
-if ddPct >= ddLimitPct and cooldownCounter == 0
-    cooldownCounter := cooldownBars
-    strategy.close_all(comment="DD breaker")
-
-if cooldownCounter > 0
-    cooldownCounter := cooldownCounter - 1
-
-canTrade = cooldownCounter == 0
-
-// === 진입/청산 ===
-if uptrend and canTrade and strategy.position_size == 0
-    qty = sizePct/100 * strategy.equity / close
-    strategy.entry("Long", strategy.long, qty=qty)
+var float peak_price = 0.0
+var int shield_stage = 0   // 0=방어없음, 1=1차(-10%), 2=2차(-18%)
 
 if strategy.position_size > 0
-    strategy.exit("Exit", "Long", stop=chandelierStop)
+    peak_price := math.max(peak_price, high)
+else
+    peak_price := 0.0
+    shield_stage := 0
 
-if not uptrend and strategy.position_size > 0
-    strategy.close("Long", comment="Trend flip")
+buy_condition = close > ma120 and ma20_slope > 0 and strategy.position_size == 0
+if buy_condition
+    strategy.entry("Long", strategy.long, comment="Entry (100%)")
 
-plot(emaFast, color=color.orange)
-plot(emaSlow, color=color.blue)
-plot(strategy.position_size > 0 ? chandelierStop : na, color=color.red, style=plot.style_linebr)
+if strategy.position_size > 0
+    // 1차 방어: 고점대비 -10% → 15% 매도
+    if shield_stage == 0 and close < peak_price * 0.90
+        strategy.close("Long", qty_percent=15, comment="Shield1 (-10%)")
+        shield_stage := 1
+    // 2차 방어: 고점대비 -18% → 추가 15% 매도
+    if shield_stage == 1 and close < peak_price * 0.82
+        strategy.close("Long", qty_percent=15, comment="Shield2 (-18%)")
+        shield_stage := 2
+
+// 최종 탈출
+exit_condition = close < ma120 * 0.95
+if exit_condition
+    strategy.close_all(comment="Total Exit (MA120)")
+
+plot(ma20, color=color.blue)
+plot(ma120, color=color.red, linewidth=2)
+plot(peak_price > 0 ? peak_price * 0.90 : na, color=color.gray, style=plot.style_linebr)
+
+
+
+ATR 근거로 매매
+//@version=5
+strategy("ASL - Index Alpha 9.4 (ATR Tiered Shield)", overlay=true,
+     initial_capital=100000, default_qty_type=strategy.percent_of_equity,
+     default_qty_value=100, pyramiding=0)
+
+// === 기본 지표 ===
+ma20  = ta.sma(close, 20)
+ma120 = ta.sma(close, 120)
+ma20_slope = ma20 - ma20[1]
+
+// === ATR 기반 방어 트리거 설정 ===
+atrLen   = input.int(14, "ATR Length")
+atrMult1 = input.float(2.5, "1차 방어 트리거 (ATR 배수)")
+atrMult2 = input.float(4.5, "2차 방어 트리거 (ATR 배수)")
+sellPct1 = input.float(10, "1차 매도 비중 %")
+sellPct2 = input.float(20, "2차 매도 비중 %")
+
+atr = ta.atr(atrLen)
+
+// === 고점 및 방어 단계 추적 ===
+var float peak_price = 0.0
+var int shield_stage = 0   // 0=방어없음, 1=1차완료, 2=2차완료
+
+if strategy.position_size > 0
+    peak_price := math.max(peak_price, high)
+else
+    peak_price := 0.0
+    shield_stage := 0
+
+// ATR 기반 방어선 (진입 시점 ATR이 아니라 실시간 ATR 사용 → 변동성 레짐에 즉시 반응)
+shieldLine1 = peak_price - atr * atrMult1
+shieldLine2 = peak_price - atr * atrMult2
+
+// === 매수 로직 ===
+buy_condition = close > ma120 and ma20_slope > 0 and strategy.position_size == 0
+if buy_condition
+    strategy.entry("Long", strategy.long, comment="Entry (100%)")
+
+// === 단계별 방어 ===
+if strategy.position_size > 0
+    if shield_stage == 0 and close < shieldLine1
+        strategy.close("Long", qty_percent=sellPct1, comment="Shield1 (ATR x " + str.tostring(atrMult1) + ")")
+        shield_stage := 1
+    if shield_stage == 1 and close < shieldLine2
+        strategy.close("Long", qty_percent=sellPct2, comment="Shield2 (ATR x " + str.tostring(atrMult2) + ")")
+        shield_stage := 2
+
+// === 최종 탈출 ===
+exit_condition = close < ma120 * 0.95
+if exit_condition
+    strategy.close_all(comment="Total Exit (MA120)")
+
+// === 시각화 ===
+plot(ma20, color=color.blue)
+plot(ma120, color=color.red, linewidth=2)
+plot(peak_price > 0 ? shieldLine1 : na, color=color.orange, style=plot.style_linebr, title="Shield1 Line")
+plot(peak_price > 0 ? shieldLine2 : na, color=color.gray,   style=plot.style_linebr, title="Shield2 Line") 
+이걸로하는데 -> 1차매도: 5% 2차매도: 25%  ATR: 7
+
+
+
+마지막: 
+
+//@version=5
+strategy("ASL - Index Alpha 9.5 (Tiered Shield + Trailing Guard)", overlay=true,
+     initial_capital=100000, default_qty_type=strategy.percent_of_equity,
+     default_qty_value=100, pyramiding=0)
+
+// === 기본 지표 ===
+ma20  = ta.sma(close, 20)
+ma120 = ta.sma(close, 120)
+ma20_slope = ma20 - ma20[1]
+
+// === 파라미터 ===
+atrLen    = input.int(14, "ATR Length")
+atrMult1  = input.float(2.0, "1차 방어 트리거 (ATR)")
+atrMult2  = input.float(4.0, "2차 방어 트리거 (ATR)")
+sellPct1  = input.float(5, "1차 매도 비중 %")
+sellPct2  = input.float(25, "2차 매도 비중 %")
+guardMult = input.float(7.0, "2차 이후 잔여 포지션 트레일링 스탑 (ATR)")
+maExitPct = input.float(0.97, "최종 탈출 MA120 배수")
+
+atr = ta.atr(atrLen)
+
+// === 고점 및 방어 단계 추적 ===
+var float peak_price = 0.0
+var int shield_stage = 0
+
+if strategy.position_size > 0
+    peak_price := math.max(peak_price, high)
+else
+    peak_price := 0.0
+    shield_stage := 0
+
+shieldLine1 = peak_price - atr * atrMult1
+shieldLine2 = peak_price - atr * atrMult2
+guardLine   = peak_price - atr * guardMult
+
+// === 매수 로직 ===
+buy_condition = close > ma120 and ma20_slope > 0 and strategy.position_size == 0
+if buy_condition
+    strategy.entry("Long", strategy.long, comment="Entry (100%)")
+
+// === 단계별 방어 (비중을 comment에 표시) ===
+if strategy.position_size > 0
+    if shield_stage == 0 and close < shieldLine1
+        strategy.close("Long", qty_percent=sellPct1,
+             comment="Shield1 Sell " + str.tostring(sellPct1, "#.#") + "%")
+        shield_stage := 1
+    if shield_stage == 1 and close < shieldLine2
+        strategy.close("Long", qty_percent=sellPct2,
+             comment="Shield2 Sell " + str.tostring(sellPct2, "#.#") + "%")
+        shield_stage := 2
+
+    if shield_stage == 2 and close < guardLine
+        strategy.close_all(comment="Guard Sell 100% (Remaining)")
+
+// === 최종 탈출 ===
+exit_condition = close < ma120 * maExitPct
+if exit_condition
+    strategy.close_all(comment="Total Exit 100% (MA120)")
+
+// === 시각화 ===
+plot(ma20, color=color.blue)
+plot(ma120, color=color.red, linewidth=2)
+plot(peak_price > 0 ? shieldLine1 : na, color=color.orange, style=plot.style_linebr, title="Shield1")
+plot(peak_price > 0 ? shieldLine2 : na, color=color.gray,   style=plot.style_linebr, title="Shield2")
+plot(shield_stage == 2 ? guardLine : na, color=color.purple, linewidth=2, style=plot.style_linebr, title="Trailing Guard")
