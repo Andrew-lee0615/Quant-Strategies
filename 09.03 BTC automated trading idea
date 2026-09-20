@@ -104,7 +104,7 @@ plot(peak_price > 0 ? shieldLine2 : na, color=color.gray,   style=plot.style_lin
 
 
 
-마지막: 
+마지막:  비트코인 일봉 수익률 제일 높고 mdd 28프로 정도
 
 //@version=5
 strategy("ASL - Index Alpha 9.5 (Tiered Shield + Trailing Guard)", overlay=true,
