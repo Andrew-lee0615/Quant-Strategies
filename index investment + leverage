@@ -1,0 +1,78 @@
+첫 아이디어: 지수 추종 1배수 etf는 적립식으로 모아가지만 극단적인 바닥에서는 3배 레버리지 상품을 사서 단기적으로 매도하면서 수익률을 극대화 하는 방법을 만들고 싶다. 
+
+레버리지의 극단적 바닥을 잡는건 쉽지 않음 -> 다른 인디케이터들을 더 사용을해보거나 다른 방식이 필요할듯. (시그널이 너무 적게 나오거나 많이 나옴) -> 차라리 전에 만들어놓은 soxl 방식을 보고 하는게 좋을듯
+
+그래서 오늘은 나스닥과 S&P500을 적립식으로 살만한 구간을 뽑아주는 방법만 만들었음. 
+
+핵심 로직
+1. RSI 40 이하 — "많이 팔린 상태인가"
+2. 최근 고점 대비 5% 이상 하락 — "실제로 눌렸는가"
+3. 200일 이동평균선 위 — "장기 추세가 아직 살아있는가"
+
++ 쿨다운(재매수 최소 간격, 10봉): 신호 조건이 며칠 연속으로 계속 맞아도, 마지막 매수 후 최소 10거래일은 지나야 다시 삼, 하루이틀 사이에 연달아 왕창 사버리는 걸 방지
+pyramiding=50: Pine Script는 기본적으로 같은 이름의 포지션에 추가 매수를 1번만 허용하는데, 이걸 50번까지 허용하도록 풀어놓음, 안 그러면 처음 한 번 사고 그 뒤로는 신호가 나와도 무시됨
+매번 "현재 자산의 15%"만큼만 매수: 정액이 아니라 비율로 계산해서, 자산이 커지면 매수 금액도 같이 커지는 구조
+
+
+총평: 시간만 충분하다면 괜찮은 포인트에서 계속해서 추매 할 수 있는 좋은 방법이지만 하락장에서는 조금 불리할 수도 있음.    -> 그래서 하락장이 올거같은 경우에는 차트가 200일선에 머리를 맞고 떨어지면 어느정도 매도하거나 나의 감이 필요할듯 
+
+
+//@version=5
+strategy("Index Dip DCA Strategy", overlay=true, initial_capital=10000, commission_type=strategy.commission.percent, commission_value=0.05, max_bars_back=500, pyramiding=50)
+
+// ============ 지표 ============
+rsiLength = input.int(14, "RSI Length", group="지표")
+rsiVal = ta.rsi(close, rsiLength)
+smaTrendLen = input.int(200, "장기 추세 SMA (이 위에서만 매수 고려)", group="지표")
+smaTrend = ta.sma(close, smaTrendLen)
+
+// ============ 적립매수 설정 ============
+grpDca = "적립매수 설정"
+dcaRsiThreshold   = input.int(40, "적립매수 RSI 기준(이하일 때 매수)", group=grpDca)
+dcaDropLookback   = input.int(20, "고점 대비 하락률 확인 기간(bars)", group=grpDca)
+dcaDropPct        = input.float(5.0, "최소 하락률(%)", step=0.5, group=grpDca)
+dcaCooldownBars   = input.int(10, "재매수 최소 간격(bars)", group=grpDca)
+dcaRequireUptrend = input.bool(true, "장기추세(SMA) 위에서만 적립매수", group=grpDca)
+dcaBuyPct         = input.float(15.0, "매수 1회당 투입 비중(현재 자산 대비 %)", step=1.0, group=grpDca)
+
+// ============ 검증 모드 (실전에서는 꺼두세요 - 매도 없이 순수 적립만) ============
+grpValid = "검증 모드 (신호 품질 테스트용, 실전에선 끄기)"
+dcaValidationMode = input.bool(false, "검증 모드 사용 (켜면 아래 익절/손절이 작동함)", group=grpValid)
+dcaTakeProfitPct  = input.float(10.0, "목표 익절 %(평균단가 대비)", step=1.0, group=grpValid)
+dcaPartialExitPct = input.float(30.0, "목표 도달 시 매도 비중(%)", minval=1, maxval=100, step=5.0, group=grpValid)
+dcaStopLossPct    = input.float(15.0, "손절 %(평균단가 대비)", step=1.0, group=grpValid)
+dcaUseStop        = input.bool(true, "손절 사용 여부", group=grpValid)
+
+// ============ 고점 대비 하락률 계산 ============
+dcaRecentHigh = ta.highest(high, dcaDropLookback)
+dcaDropFromHigh = (dcaRecentHigh - close) / dcaRecentHigh * 100
+
+// ============ 적립매수 신호 ============
+var int lastDcaBar = na
+dcaCooldownOK = na(lastDcaBar) or (bar_index - lastDcaBar) >= dcaCooldownBars
+dcaTrendOK = not dcaRequireUptrend or close > smaTrend
+
+dcaBuySignal = rsiVal <= dcaRsiThreshold and dcaDropFromHigh >= dcaDropPct and dcaTrendOK and dcaCooldownOK
+
+if dcaBuySignal
+    dcaQty = (strategy.equity * dcaBuyPct / 100) / close
+    strategy.entry("DCA Buy", strategy.long, qty=dcaQty)
+    lastDcaBar := bar_index
+
+// ============ 검증 모드일 때만 매도 (실전에서는 절대 안 팜) ============
+if dcaValidationMode and strategy.position_size > 0
+    dcaAvgPrice = strategy.position_avg_price
+    dcaTargetPrice = dcaAvgPrice * (1 + dcaTakeProfitPct / 100)
+    dcaStopPrice = dcaAvgPrice * (1 - dcaStopLossPct / 100)
+    if close >= dcaTargetPrice
+        strategy.close("DCA Buy", qty_percent=dcaPartialExitPct, comment="목표 익절")
+    if dcaUseStop and close <= dcaStopPrice
+        strategy.close("DCA Buy", qty_percent=100, comment="손절")
+
+// ============ 시각화 ============
+plotshape(dcaBuySignal, title="적립매수 신호", location=location.belowbar, style=shape.triangleup, color=color.new(color.blue, 0), size=size.small)
+plot(smaTrend, "장기추세 SMA", color=color.new(color.gray, 40))
+
+// ============ 알림 ============
+alertcondition(dcaBuySignal, "적립매수 신호", "지수 적립매수 타이밍입니다")
+
