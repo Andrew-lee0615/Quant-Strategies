@@ -98,11 +98,15 @@ plot(ma120, color=color.red, linewidth=2, title="MA120")
 plot(peak_price > 0 ? peak_price * 0.85 : na, color=color.gray, style=plot.style_linebr, title="Shield Line (-15%)")
 
 
+
+
+
 //@version=5
 strategy("ASL - Index Alpha 9.2 (100% Compound)", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
 
 // 1. 지표 계산
 ma20 = ta.sma(close, 20)
+ma60 = ta.sma(close, 60)
 ma120 = ta.sma(close, 120)
 ma20_slope = ma20 - ma20[1]
 
@@ -142,5 +146,7 @@ if (exit_condition)
 
 // 차트 표시 (시각화)
 plot(ma20, color=color.blue, title="MA20")
+plot(ma60, color=color.orange, title="MA60")
 plot(ma120, color=color.red, linewidth=2, title="MA120")
+plot(peak_price > 0 ? peak_price * 0.85 : na, color=color.gray, style=plot.style_linebr, title="Shield Line (-15%)")
 plot(peak_price > 0 ? peak_price * 0.85 : na, color=color.gray, style=plot.style_linebr, title="Shield Line (-15%)")
