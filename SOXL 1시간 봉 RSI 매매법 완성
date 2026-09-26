@@ -488,3 +488,57 @@ bgcolor(strategy.position_size > 0 ? color.new(color.green, 90) : na)
 // ============ ALERTS ============
 alertcondition(longCondition, "SOXL RSI Buy", "RSI Buy Signal")
 alertcondition(exitCondition, "SOXL RSI Sell", "RSI Sell Signal")
+
+// ============ HOLDING PERIOD STATS ============
+showHoldTable = input.bool(true, "Show Holding Period Table", group="Holding Stats")
+
+var table holdTbl = table.new(position.top_right, 3, 5, bgcolor=color.new(color.black, 20), border_color=color.gray, border_width=1)
+f_cell(c, r, s) => table.cell(holdTbl, c, r, s, text_color=color.white, text_size=size.small)
+f_fmt(x) => na(x) ? "-" : str.tostring(x, "#.0")
+
+if barstate.islast and showHoldTable
+    int   tgtCount   = 0
+    float tgtSumBars = 0.0
+    float tgtSumDays = 0.0
+    float tgtMaxBars = 0.0
+    float tgtMaxDays = 0.0
+    int   allCount   = strategy.closedtrades
+    float allSumBars = 0.0
+    float allSumDays = 0.0
+
+    if allCount > 0
+        for i = 0 to allCount - 1
+            float bars = strategy.closedtrades.exit_bar_index(i) - strategy.closedtrades.entry_bar_index(i)
+            float days = (strategy.closedtrades.exit_time(i) - strategy.closedtrades.entry_time(i)) / 86400000.0
+            allSumBars += bars
+            allSumDays += days
+            if strategy.closedtrades.exit_comment(i) == "RSI Target"
+                tgtCount   += 1
+                tgtSumBars += bars
+                tgtSumDays += days
+                tgtMaxBars := math.max(tgtMaxBars, bars)
+                tgtMaxDays := math.max(tgtMaxDays, days)
+
+    // 현재 보유 중인 포지션 경과 기간
+    float curBars = strategy.opentrades > 0 ? bar_index - strategy.opentrades.entry_bar_index(0) : na
+    float curDays = strategy.opentrades > 0 ? (time - strategy.opentrades.entry_time(0)) / 86400000.0 : na
+
+    f_cell(0, 0, "보유 기간")
+    f_cell(1, 0, "거래일")
+    f_cell(2, 0, "달력일")
+
+    f_cell(0, 1, "RSI Target 평균 (" + str.tostring(tgtCount) + "건)")
+    f_cell(1, 1, f_fmt(tgtCount > 0 ? tgtSumBars / tgtCount : na))
+    f_cell(2, 1, f_fmt(tgtCount > 0 ? tgtSumDays / tgtCount : na))
+
+    f_cell(0, 2, "RSI Target 최대")
+    f_cell(1, 2, f_fmt(tgtCount > 0 ? tgtMaxBars : na))
+    f_cell(2, 2, f_fmt(tgtCount > 0 ? tgtMaxDays : na))
+
+    f_cell(0, 3, "전체 청산 평균 (" + str.tostring(allCount) + "건)")
+    f_cell(1, 3, f_fmt(allCount > 0 ? allSumBars / allCount : na))
+    f_cell(2, 3, f_fmt(allCount > 0 ? allSumDays / allCount : na))
+
+    f_cell(0, 4, "현재 보유 중")
+    f_cell(1, 4, f_fmt(curBars))
+    f_cell(2, 4, f_fmt(curDays))
